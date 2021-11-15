@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::anyhow;
 
-use crate::users::{Perms, Username};
+use crate::users::{AccessMap, Perms, Username};
 
 const ROOT_ID: NodeId = NodeId(0);
 
@@ -23,6 +23,16 @@ impl NodeId {
 #[derive(Default)]
 struct File {
     content: String,
+}
+impl File {
+    fn read(&self) -> &str {
+        &self.content
+    }
+
+    fn write(&mut self, data: &str) {
+        self.content.clear();
+        self.content += data;
+    }
 }
 
 struct Dir {
@@ -49,6 +59,21 @@ impl Dir {
     fn add(&mut self, name: &str, id: NodeId) {
         self.nodes.insert(name.to_string(), id);
     }
+
+    fn rm(&mut self, name: &str) -> Option<NodeId> {
+        self.nodes.remove(name)
+    }
+
+    fn len(&self) -> usize {
+        self.nodes.len() - 2 // minus .. and .
+    }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn entries(&self) -> impl Iterator<Item = (&str, NodeId)> {
+        self.nodes.iter().map(|(name, id)| (name.as_str(), *id))
+    }
 }
 
 enum NodeKind {
@@ -65,7 +90,7 @@ enum NodeTag {
 struct Node {
     id: NodeId,
     kind: NodeKind,
-    perms: HashMap<Username, Perms>,
+    perms: AccessMap,
 }
 
 impl Node {
@@ -201,30 +226,70 @@ impl Fs {
         Ok(id)
     }
 
-    // FS
-
-    pub fn read<'a>(&'a self, path: &Path) -> anyhow::Result<&'a [u8]> {
-        todo!()
+    fn resolve_parent_of(&self, path: &Path) -> anyhow::Result<&Node> {
+        self.resolve_path(path.parent().unwrap_or_else(|| Path::new(".")))
     }
 
-    pub fn write(&self, path: &Path, data: &[u8]) -> anyhow::Result<()> {
-        todo!()
+    // FS
+
+    pub fn read<'a>(&'a self, path: &Path) -> anyhow::Result<&'a str> {
+        Ok(self.resolve_path(path)?.as_file()?.read())
+    }
+
+    pub fn write(&mut self, path: &Path, data: &str) -> anyhow::Result<()> {
+        let id = self.resolve_path(path)?.id;
+        let node = self.get_node_mut(id).as_file_mut()?;
+        node.write(data);
+        Ok(())
     }
 
     pub fn access(&self, path: &Path) -> anyhow::Result<()> {
-        todo!()
+        self.resolve_path(path).map(|_| ())
+    }
+
+    fn rm_recursive(&mut self, id: NodeId) {
+        if let Some(node) = self.nodes.remove(&id) {
+            if let NodeKind::Dir(dir) = node.kind {
+                dir.entries()
+                    .filter(|(name, _)| !matches!(*name, "." | ".."))
+                    .for_each(|(_, id)| self.rm_recursive(id))
+            }
+        }
     }
 
     pub fn rm(&mut self, path: &Path) -> anyhow::Result<()> {
-        todo!()
+        let name = filename(path)?;
+        let parent = self.resolve_parent_of(path)?;
+
+        let id = parent.as_dir()?.lookup(name)?;
+        let node = self.get_node(id);
+        if let NodeKind::Dir(dir) = &node.kind {
+            if !dir.is_empty() {
+                anyhow::bail!("can't remove non-empty directory")
+            }
+        }
+
+        let parent_id = parent.id;
+        let parent = self.get_node_mut(parent_id).as_dir_mut()?;
+        let old = parent.rm(name).expect("should exists");
+        self.rm_recursive(old);
+        Ok(())
     }
 
     pub fn new_file(&mut self, path: &Path) -> anyhow::Result<()> {
-        todo!()
+        let parent_id = self.resolve_parent_of(path)?.id;
+        let name = filename(path)?;
+        self.create(parent_id, name, NodeTag::File)?;
+
+        Ok(())
     }
 
     pub fn new_dir(&mut self, path: &Path) -> anyhow::Result<()> {
-        todo!()
+        let parent_id = self.resolve_parent_of(path)?.id;
+        let name = filename(path)?;
+        self.create(parent_id, name, NodeTag::Dir)?;
+
+        Ok(())
     }
 
     pub fn exec(&mut self, path: &Path) -> anyhow::Result<()> {
@@ -250,6 +315,14 @@ where
     Ok(element)
 }
 
+fn filename(path: &Path) -> anyhow::Result<&str> {
+    Ok(path
+        .file_name()
+        .ok_or_else(|| anyhow!("path can't end in .."))?
+        .to_str()
+        .expect("valid utf8"))
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -265,5 +338,36 @@ mod tests {
 
         let node = fs.resolve_path(Path::new("file")).unwrap();
         assert!(node.is_file());
+    }
+
+    #[test]
+    fn create_write_read() {
+        let mut fs = Fs::new();
+        fs.new_dir(Path::new("/dir")).unwrap();
+        fs.new_file(Path::new("/dir/file")).unwrap();
+
+        let data = "42";
+        fs.write(Path::new("/dir/file"), data).unwrap();
+
+        let content = fs.read(Path::new("/dir/file")).unwrap();
+
+        assert_eq!(content, data);
+    }
+
+    #[test]
+    fn create_write_rm_read() {
+        let mut fs = Fs::new();
+        fs.new_dir(Path::new("/dir")).unwrap();
+        fs.new_file(Path::new("/dir/file")).unwrap();
+
+        let data = "42";
+        fs.write(Path::new("/dir/file"), data).unwrap();
+
+        let content = fs.read(Path::new("/dir/file")).unwrap();
+
+        assert_eq!(content, data);
+
+        let res = fs.rm(Path::new("/dir"));
+        assert!(res.is_err());
     }
 }
