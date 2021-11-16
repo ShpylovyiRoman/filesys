@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::anyhow;
 
-use crate::users::{AccessMap, Perms, Username};
+use crate::users::{AccessMap, Op, Perms, UserId};
 
 const ROOT_ID: NodeId = NodeId(0);
 
@@ -32,6 +32,9 @@ impl File {
     fn write(&mut self, data: &str) {
         self.content.clear();
         self.content += data;
+    }
+    fn size(&self) -> usize {
+        self.content.len()
     }
 }
 
@@ -65,10 +68,10 @@ impl Dir {
     }
 
     fn len(&self) -> usize {
-        self.nodes.len() - 2 // minus .. and .
+        self.nodes.len()
     }
     fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.len() == 2 // skip .. and .
     }
 
     fn entries(&self) -> impl Iterator<Item = (&str, NodeId)> {
@@ -82,7 +85,7 @@ enum NodeKind {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum NodeTag {
+pub enum NodeTag {
     File,
     Dir,
 }
@@ -160,6 +163,44 @@ impl Node {
     pub fn is_dir(&self) -> bool {
         matches!(&self.kind, &NodeKind::Dir(..))
     }
+
+    pub fn check_if_allowed(&self, uid: UserId, ops: &[Op]) -> anyhow::Result<()> {
+        if self.perms.allows(uid, ops) {
+            Ok(())
+        } else {
+            anyhow::bail!("permission denied")
+        }
+    }
+
+    pub fn set_perm(&mut self, uid: UserId, perms: impl Into<Perms>) {
+        self.perms.set(uid, perms)
+    }
+
+    fn tag(&self) -> NodeTag {
+        match &self.kind {
+            NodeKind::File(_) => NodeTag::File,
+            NodeKind::Dir(_) => NodeTag::Dir,
+        }
+    }
+
+    fn perms_for(&self, uid: UserId) -> Perms {
+        self.perms.get(uid)
+    }
+
+    fn size(&self) -> usize {
+        match &self.kind {
+            NodeKind::File(f) => f.size(),
+            NodeKind::Dir(d) => d.len(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeEntry {
+    pub tag: NodeTag,
+    pub name: String,
+    pub perms: Perms,
+    pub size: usize,
 }
 
 pub struct Fs {
@@ -186,34 +227,68 @@ impl Fs {
         }
     }
 
-    fn resolve_path<'a>(&'a self, path: &Path) -> anyhow::Result<&'a Node> {
-        let root = self.nodes.get(&ROOT_ID).expect("root should always exist");
-
-        let node = reduce_segments(path, root, |node, name| self.lookup(node.id, name))?;
-
+    /// Transform path into immutable reference
+    /// Checks for permissions on every segment of the path
+    fn resolve_path<'a>(&'a self, uid: UserId, path: &Path) -> anyhow::Result<&'a Node> {
+        let root = self.get_node(uid, ROOT_ID)?;
+        let node = reduce_segments(path, root, |node, name| self.lookup(uid, node.id, name))?;
         Ok(node)
     }
 
-    fn lookup<'a>(&'a self, id: NodeId, name: &str) -> anyhow::Result<&'a Node> {
-        let dir = self.get_node(id).as_dir()?;
+    /// Transform path into the mutable reference
+    /// Checks for permissions on every segment of the pat
+    fn resolve_path_mut<'a>(
+        &'a mut self,
+        uid: UserId,
+        path: &Path,
+    ) -> anyhow::Result<&'a mut Node> {
+        let id = self.resolve_path(uid, path)?.id;
+        self.get_node_mut(uid, id)
+    }
+
+    /// Lookup Node in directory with id = parent_id
+    fn lookup<'a>(
+        &'a self,
+        uid: UserId,
+        parent_id: NodeId,
+        name: &str,
+    ) -> anyhow::Result<&'a Node> {
+        let dir = self.get_node(uid, parent_id)?.as_dir()?;
         let node_id = dir.lookup(name)?;
-
-        Ok(self.get_node(node_id))
+        self.get_node(uid, node_id)
     }
 
-    fn get_node(&self, node_id: NodeId) -> &Node {
-        self.nodes.get(&node_id).expect("bug: node should exist")
+    /// Get reference to the node with a given id
+    /// Checks permissions
+    fn get_node(&self, uid: UserId, node_id: NodeId) -> anyhow::Result<&Node> {
+        let node = self.nodes.get(&node_id).expect("bug: node should exist");
+        node.check_if_allowed(uid, &[Op::Read])?;
+        Ok(node)
     }
 
-    fn get_node_mut(&mut self, node_id: NodeId) -> &mut Node {
-        self.nodes
+    /// Get mutable reference to the node with a given id
+    /// Checks permissions
+    fn get_node_mut(&mut self, uid: UserId, node_id: NodeId) -> anyhow::Result<&mut Node> {
+        let node = self
+            .nodes
             .get_mut(&node_id)
-            .expect("bug: node should exist")
+            .expect("bug: node should exist");
+
+        node.check_if_allowed(uid, &[Op::Write])?;
+        Ok(node)
     }
 
-    fn create(&mut self, parent_id: NodeId, name: &str, tag: NodeTag) -> anyhow::Result<NodeId> {
+    /// Creates a new node in a directory with a parent_id
+    /// Checks permissions
+    fn create(
+        &mut self,
+        uid: UserId,
+        parent_id: NodeId,
+        name: &str,
+        tag: NodeTag,
+    ) -> anyhow::Result<NodeId> {
         let mut counter = self.node_counter;
-        let parent = self.get_node_mut(parent_id).as_dir_mut()?;
+        let parent = self.get_node_mut(uid, parent_id)?.as_dir_mut()?;
         if parent.contains(name) {
             anyhow::bail!("file exists");
         }
@@ -226,27 +301,31 @@ impl Fs {
         Ok(id)
     }
 
-    fn resolve_parent_of(&self, path: &Path) -> anyhow::Result<&Node> {
-        self.resolve_path(path.parent().unwrap_or_else(|| Path::new(".")))
+    /// Returns immutable reference to the parent of a given path
+    fn resolve_parent_of(&self, uid: UserId, path: &Path) -> anyhow::Result<&Node> {
+        self.resolve_path(uid, path.parent().unwrap_or_else(|| Path::new(".")))
+    }
+
+    /// Returns immutable reference to the parent of a given path
+    fn resolve_parent_of_mut(&mut self, uid: UserId, path: &Path) -> anyhow::Result<&mut Node> {
+        self.resolve_path_mut(uid, path.parent().unwrap_or_else(|| Path::new(".")))
     }
 
     // FS
 
-    pub fn read<'a>(&'a self, path: &Path) -> anyhow::Result<&'a str> {
-        Ok(self.resolve_path(path)?.as_file()?.read())
+    /// Read a file
+    pub fn read<'a>(&'a self, uid: UserId, path: &Path) -> anyhow::Result<&'a str> {
+        Ok(self.resolve_path(uid, path)?.as_file()?.read())
     }
 
-    pub fn write(&mut self, path: &Path, data: &str) -> anyhow::Result<()> {
-        let id = self.resolve_path(path)?.id;
-        let node = self.get_node_mut(id).as_file_mut()?;
+    /// Write data to a file. Overrites content
+    pub fn write(&mut self, uid: UserId, path: &Path, data: &str) -> anyhow::Result<()> {
+        let node = self.resolve_path_mut(uid, path)?.as_file_mut()?;
         node.write(data);
         Ok(())
     }
 
-    pub fn access(&self, path: &Path) -> anyhow::Result<()> {
-        self.resolve_path(path).map(|_| ())
-    }
-
+    /// Remove node and all subnodes
     fn rm_recursive(&mut self, id: NodeId) {
         if let Some(node) = self.nodes.remove(&id) {
             if let NodeKind::Dir(dir) = node.kind {
@@ -257,12 +336,13 @@ impl Fs {
         }
     }
 
-    pub fn rm(&mut self, path: &Path) -> anyhow::Result<()> {
+    /// Remove node. Returns error, if a node is a non-empty directory
+    pub fn rm(&mut self, uid: UserId, path: &Path) -> anyhow::Result<()> {
         let name = filename(path)?;
-        let parent = self.resolve_parent_of(path)?;
+        let parent = self.resolve_parent_of(uid, path)?;
 
         let id = parent.as_dir()?.lookup(name)?;
-        let node = self.get_node(id);
+        let node = self.get_node(uid, id)?;
         if let NodeKind::Dir(dir) = &node.kind {
             if !dir.is_empty() {
                 anyhow::bail!("can't remove non-empty directory")
@@ -270,30 +350,68 @@ impl Fs {
         }
 
         let parent_id = parent.id;
-        let parent = self.get_node_mut(parent_id).as_dir_mut()?;
+        let parent = self.get_node_mut(uid, parent_id)?.as_dir_mut()?;
         let old = parent.rm(name).expect("should exists");
         self.rm_recursive(old);
         Ok(())
     }
 
-    pub fn new_file(&mut self, path: &Path) -> anyhow::Result<()> {
-        let parent_id = self.resolve_parent_of(path)?.id;
+    /// Creates new file in a given path. Returns error if the path exists
+    pub fn new_file(&mut self, uid: UserId, path: &Path) -> anyhow::Result<()> {
+        let parent_id = self.resolve_parent_of_mut(uid, path)?.id;
         let name = filename(path)?;
-        self.create(parent_id, name, NodeTag::File)?;
-
+        self.create(uid, parent_id, name, NodeTag::File)?;
         Ok(())
     }
 
-    pub fn new_dir(&mut self, path: &Path) -> anyhow::Result<()> {
-        let parent_id = self.resolve_parent_of(path)?.id;
+    /// Creates new directory in a given path. Returns error if the path exists
+    pub fn new_dir(&mut self, uid: UserId, path: &Path) -> anyhow::Result<()> {
+        let parent_id = self.resolve_parent_of_mut(uid, path)?.id;
         let name = filename(path)?;
-        self.create(parent_id, name, NodeTag::Dir)?;
-
+        self.create(uid, parent_id, name, NodeTag::Dir)?;
         Ok(())
     }
 
-    pub fn exec(&mut self, path: &Path) -> anyhow::Result<()> {
-        todo!()
+    /// Executes file in a given path
+    pub fn exec(&mut self, uid: UserId, path: &Path) -> anyhow::Result<()> {
+        let node = self.resolve_path(uid, path)?;
+        node.check_if_allowed(uid, &[Op::Exec])
+    }
+
+    /// Sets permissions of a given
+    pub fn set_perms(
+        &mut self,
+        uid: UserId,
+        path: &Path,
+        perms: impl Into<Perms>,
+    ) -> anyhow::Result<()> {
+        let node = self.resolve_path_mut(uid, path)?;
+        node.check_if_allowed(uid, &[Op::Control])?;
+        node.set_perm(uid, perms);
+        Ok(())
+    }
+
+    /// List entries in a directory
+    pub fn ls(&self, uid: UserId, path: &Path) -> anyhow::Result<Vec<NodeEntry>> {
+        let dir = self.resolve_path(uid, path)?.as_dir()?;
+        let mut entries = Vec::with_capacity(dir.len());
+
+        for (name, id) in dir.entries() {
+            let entry = match self.get_node(uid, id) {
+                Ok(node) => NodeEntry {
+                    tag: node.tag(),
+                    name: name.into(),
+                    perms: node.perms_for(uid),
+                    size: node.size(),
+                },
+                // TODO: report somehow?
+                Err(_) => continue,
+            };
+
+            entries.push(entry);
+        }
+
+        Ok(entries)
     }
 }
 
@@ -326,30 +444,21 @@ fn filename(path: &Path) -> anyhow::Result<&str> {
 #[cfg(test)]
 mod tests {
 
+    use crate::users::ADMIN_ID;
+
     use super::*;
-
-    #[test]
-    fn lookup_file() {
-        let mut fs = Fs::new();
-        let id = fs.create(ROOT_ID, "file", NodeTag::File).unwrap();
-
-        let node = fs.get_node(id);
-        assert!(node.is_file());
-
-        let node = fs.resolve_path(Path::new("file")).unwrap();
-        assert!(node.is_file());
-    }
 
     #[test]
     fn create_write_read() {
         let mut fs = Fs::new();
-        fs.new_dir(Path::new("/dir")).unwrap();
-        fs.new_file(Path::new("/dir/file")).unwrap();
+        let uid = ADMIN_ID;
+        fs.new_dir(uid, Path::new("/dir")).unwrap();
+        fs.new_file(uid, Path::new("/dir/file")).unwrap();
 
         let data = "42";
-        fs.write(Path::new("/dir/file"), data).unwrap();
+        fs.write(uid, Path::new("/dir/file"), data).unwrap();
 
-        let content = fs.read(Path::new("/dir/file")).unwrap();
+        let content = fs.read(uid, Path::new("/dir/file")).unwrap();
 
         assert_eq!(content, data);
     }
@@ -357,17 +466,31 @@ mod tests {
     #[test]
     fn create_write_rm_read() {
         let mut fs = Fs::new();
-        fs.new_dir(Path::new("/dir")).unwrap();
-        fs.new_file(Path::new("/dir/file")).unwrap();
+        let uid = ADMIN_ID;
+        fs.new_dir(uid, Path::new("/dir")).unwrap();
+        fs.new_file(uid, Path::new("/dir/file")).unwrap();
 
         let data = "42";
-        fs.write(Path::new("/dir/file"), data).unwrap();
+        fs.write(uid, Path::new("/dir/file"), data).unwrap();
 
-        let content = fs.read(Path::new("/dir/file")).unwrap();
+        let content = fs.read(uid, Path::new("/dir/file")).unwrap();
 
         assert_eq!(content, data);
 
-        let res = fs.rm(Path::new("/dir"));
+        let res = fs.rm(uid, Path::new("/dir"));
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn create_access_read() {
+        let mut fs = Fs::new();
+        let uid = ADMIN_ID;
+
+        fs.new_file(uid, Path::new("./file")).unwrap();
+
+        fs.write(uid, Path::new("file"), "my fancy data").unwrap();
+
+        fs.read(UserId::new(12), Path::new("/dir/file"))
+            .unwrap_err();
     }
 }
