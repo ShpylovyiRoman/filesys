@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(u64);
 
 impl UserId {
@@ -23,6 +25,7 @@ pub const ADMIN_ID: UserId = UserId(0);
 
 pub type Username = String;
 
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Op {
     Read,
     Write,
@@ -45,7 +48,7 @@ impl<'a> From<&'a [Op]> for Perms {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 pub struct Perms {
     pub read: bool,
     pub write: bool,
@@ -53,6 +56,7 @@ pub struct Perms {
     pub control: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct User {
     id: UserId,
     name: Username,
@@ -73,7 +77,7 @@ impl Perms {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct AccessMap {
     perms: HashMap<UserId, Perms>,
 }

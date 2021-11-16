@@ -4,12 +4,13 @@ use std::{
 };
 
 use anyhow::anyhow;
+use serde::{Deserialize, Serialize};
 
 use crate::users::{AccessMap, Op, Perms, UserId};
 
 const ROOT_ID: NodeId = NodeId(0);
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct NodeId(u64);
 
 impl NodeId {
@@ -20,7 +21,7 @@ impl NodeId {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct File {
     content: String,
 }
@@ -38,6 +39,7 @@ impl File {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 struct Dir {
     nodes: HashMap<String, NodeId>,
 }
@@ -79,17 +81,19 @@ impl Dir {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 enum NodeKind {
     File(File),
     Dir(Dir),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum NodeTag {
     File,
     Dir,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 struct Node {
     id: NodeId,
     kind: NodeKind,
@@ -156,14 +160,6 @@ impl Node {
         }
     }
 
-    pub fn is_file(&self) -> bool {
-        matches!(&self.kind, &NodeKind::File(..))
-    }
-
-    pub fn is_dir(&self) -> bool {
-        matches!(&self.kind, &NodeKind::Dir(..))
-    }
-
     pub fn check_if_allowed(&self, uid: UserId, ops: &[Op]) -> anyhow::Result<()> {
         if self.perms.allows(uid, ops) {
             Ok(())
@@ -195,7 +191,7 @@ impl Node {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeEntry {
     pub tag: NodeTag,
     pub name: String,
@@ -203,6 +199,7 @@ pub struct NodeEntry {
     pub size: usize,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Fs {
     nodes: HashMap<NodeId, Node>,
     node_counter: NodeId,
