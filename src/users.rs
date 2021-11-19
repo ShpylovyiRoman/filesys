@@ -67,6 +67,16 @@ pub struct Perms {
     pub control: bool,
 }
 
+impl std::fmt::Display for Perms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let read = if self.read { 'r' } else { '-' };
+        let write = if self.write { 'w' } else { '-' };
+        let exec = if self.exec { 'x' } else { '-' };
+        let control = if self.control { 'c' } else { '-' };
+        write!(f, "{}{}{}{}", read, write, exec, control)
+    }
+}
+
 impl FromStr for Perms {
     type Err = anyhow::Error;
 

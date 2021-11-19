@@ -33,4 +33,14 @@ impl<T> IntoSerialize<T> for anyhow::Result<T> {
     }
 }
 
+pub trait EDeserialize<T> {
+    fn deserialize(self) -> anyhow::Result<T>;
+}
+
+impl<T> EDeserialize<T> for Result<T, String> {
+    fn deserialize(self) -> anyhow::Result<T> {
+        self.map_err(|err| anyhow::anyhow!("{}", err))
+    }
+}
+
 pub type ResResult<T> = Result<T, String>;

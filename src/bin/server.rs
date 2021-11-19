@@ -34,9 +34,12 @@ async fn login_endpoint(
     sys: &State<Sys>,
     creds: Json<LoginInfo>,
     cookies: &CookieJar<'_>,
-) -> Json<ResResult<UserId>> {
+) -> Json<ResResult<()>> {
     let sys = sys.lock().await;
-    let res = login(&sys, &creds, cookies).await.into_serialize();
+    let res = login(&sys, &creds, cookies)
+        .await
+        .into_serialize()
+        .map(|_| ());
     Json(res)
 }
 

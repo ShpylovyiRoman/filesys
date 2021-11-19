@@ -108,6 +108,7 @@ impl Node {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new(id: NodeId, kind: NodeKind) -> Self {
         Self {
             id,

@@ -73,9 +73,3 @@ impl System {
         }
     }
 }
-
-#[test]
-fn del() {
-    let action = Action::Ls("/root".into());
-    println!("{}", serde_json::to_string(&action).unwrap());
-}
