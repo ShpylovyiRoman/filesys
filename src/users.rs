@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, str::FromStr};
 
 use anyhow::anyhow;
 use argon2::{
@@ -65,6 +65,24 @@ pub struct Perms {
     pub write: bool,
     pub exec: bool,
     pub control: bool,
+}
+
+impl FromStr for Perms {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut this = Self::default();
+        for c in s.chars() {
+            match c {
+                'r' => this.read = true,
+                'w' => this.write = true,
+                'e' => this.exec = true,
+                'c' => this.control = true,
+                _ => anyhow::bail!("unexpected character: {:?}", c),
+            }
+        }
+        Ok(this)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
