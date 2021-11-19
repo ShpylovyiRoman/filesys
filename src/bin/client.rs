@@ -12,6 +12,8 @@ use filesys::{
 use reqwest::{Client, ClientBuilder};
 use structopt::{clap::AppSettings, StructOpt};
 
+const AUTH_REQUIRED: &str = "authentication required";
+
 #[derive(Debug, structopt::StructOpt)]
 struct Opt {
     #[structopt(long, default_value = "127.0.0.1")]
@@ -76,6 +78,11 @@ fn print_action_res(res: &ActionRes) {
     }
 }
 
+async fn login(base: String) -> anyhow::Result<State> {
+    let (username, password) = read_uname_pass()?;
+    State::new(base, username, password).await
+}
+
 impl State {
     async fn new(base: String, username: String, password: String) -> anyhow::Result<Self> {
         let client = ClientBuilder::new().cookie_store(true).build()?;
@@ -137,8 +144,7 @@ async fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
     let base = format!("http://{}:{}", opt.host, opt.port);
 
-    let (username, password) = read_uname_pass()?;
-    let state = State::new(base, username, password).await?;
+    let mut state = login(base.clone()).await?;
 
     let mut line = String::new();
     loop {
@@ -161,7 +167,13 @@ async fn main() -> anyhow::Result<()> {
                     break;
                 }
             }
-            Err(err) => eprintln!("{}", err),
+            Err(err) => {
+                let string = err.to_string();
+                eprintln!("{}", string);
+                if string.contains(AUTH_REQUIRED) {
+                    state = login(base.clone()).await?;
+                }
+            }
         }
     }
     Ok(())
