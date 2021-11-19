@@ -1,3 +1,5 @@
+use std::{io::ErrorKind, sync::Arc};
+
 use filesys::{
     protocol::{ApiKey, IntoSerialize, LoginInfo, ResResult},
     users::UserId,
@@ -5,14 +7,14 @@ use filesys::{
 };
 use rocket::{
     futures::lock::Mutex,
-    get,
     http::{Cookie, CookieJar},
     post, routes,
     serde::json::Json,
     State,
 };
+use structopt::StructOpt;
 
-type Sys = Mutex<System>;
+type Sys = Arc<Mutex<System>>;
 
 async fn login(sys: &System, creds: &LoginInfo, cookies: &CookieJar<'_>) -> anyhow::Result<UserId> {
     let uid = sys.login(&creds.username, &creds.password)?;
@@ -63,20 +65,35 @@ async fn exec_endpoint(
     Json(res)
 }
 
-#[get("/")]
-fn index() -> &'static str {
-    "Hello, world!"
+#[derive(Debug, structopt::StructOpt)]
+struct Opt {
+    image: String,
 }
 
 #[rocket::main]
 async fn main() -> anyhow::Result<()> {
-    let sys = Sys::new(System::new()?);
+    let opt = Opt::from_args();
+
+    let sys = match std::fs::File::open(&opt.image) {
+        Err(err) if err.kind() == ErrorKind::NotFound => System::new()?,
+        Ok(file) => bincode::deserialize_from(file)?,
+        Err(err) => return Err(err.into()),
+    };
+    let out = std::fs::File::create(&opt.image)?;
+
+    let sys = Sys::new(Mutex::new(sys));
 
     rocket::build()
-        .manage(sys)
-        .mount("/", routes![index, login_endpoint, exec_endpoint])
+        .manage(sys.clone())
+        .mount("/", routes![login_endpoint, exec_endpoint])
         .launch()
         .await?;
+
+    let sys = Arc::try_unwrap(sys)
+        .map_err(|_| anyhow::anyhow!("bug: should be only one reference"))
+        .unwrap();
+    let sys = sys.into_inner();
+    bincode::serialize_into(out, &sys)?;
 
     Ok(())
 }

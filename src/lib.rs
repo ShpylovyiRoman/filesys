@@ -29,6 +29,7 @@ pub enum ActionRes {
     Ls(Vec<NodeEntry>),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct System {
     fs: Fs,
     users: UserDb,
