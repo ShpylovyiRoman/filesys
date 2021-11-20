@@ -380,12 +380,13 @@ impl Fs {
     pub fn set_perms(
         &mut self,
         uid: UserId,
+        for_user: UserId,
         path: &Path,
         perms: impl Into<Perms>,
     ) -> anyhow::Result<()> {
         let node = self.resolve_path_mut(uid, path)?;
         node.check_if_allowed(uid, &[Op::Control])?;
-        node.set_perm(uid, perms);
+        node.set_perm(for_user, perms);
         Ok(())
     }
 

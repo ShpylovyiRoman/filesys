@@ -235,4 +235,11 @@ impl UserDb {
 
         user.change_pass(new_pass)
     }
+
+    pub fn id_of(&self, username: &str) -> anyhow::Result<UserId> {
+        self.unames
+            .get(username)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("user not found"))
+    }
 }

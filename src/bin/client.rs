@@ -44,15 +44,36 @@ fn read_uname_pass() -> anyhow::Result<(String, String)> {
 #[derive(Debug, structopt::StructOpt)]
 #[structopt(setting(AppSettings::NoBinaryName))]
 enum Cmd {
-    Read { path: PathBuf },
-    Write { path: PathBuf, data: String },
-    Rm { path: PathBuf },
-    NewFile { path: PathBuf },
-    NewDir { path: PathBuf },
-    Exec { path: PathBuf },
-    SetPerms { path: PathBuf, perms: Perms },
-    Ls { path: PathBuf },
-    AddUser { username: Username },
+    Read {
+        path: PathBuf,
+    },
+    Write {
+        path: PathBuf,
+        data: String,
+    },
+    Rm {
+        path: PathBuf,
+    },
+    NewFile {
+        path: PathBuf,
+    },
+    NewDir {
+        path: PathBuf,
+    },
+    Exec {
+        path: PathBuf,
+    },
+    SetPerms {
+        path: PathBuf,
+        username: String,
+        perms: Perms,
+    },
+    Ls {
+        path: PathBuf,
+    },
+    AddUser {
+        username: Username,
+    },
     ChangePass,
     Exit,
 }
@@ -109,7 +130,11 @@ impl State {
             Cmd::NewFile { path } => Action::NewFile(path),
             Cmd::NewDir { path } => Action::NewDir(path),
             Cmd::Exec { path } => Action::Exec(path),
-            Cmd::SetPerms { path, perms } => Action::SetPerms(path, perms),
+            Cmd::SetPerms {
+                path,
+                username,
+                perms,
+            } => Action::SetPerms(path, username, perms),
             Cmd::Ls { path } => Action::Ls(path),
             Cmd::AddUser { username } => Action::AddUser(username),
             Cmd::ChangePass => {

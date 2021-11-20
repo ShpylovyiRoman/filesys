@@ -16,7 +16,7 @@ pub enum Action {
     NewFile(PathBuf),
     NewDir(PathBuf),
     Exec(PathBuf),
-    SetPerms(PathBuf, Perms),
+    SetPerms(PathBuf, Username, Perms),
     Ls(PathBuf),
     AddUser(Username),
     ChangePassword { old: String, new: String },
@@ -67,7 +67,10 @@ impl System {
             Action::NewFile(path) => self.fs.new_file(uid, path).map(ok),
             Action::NewDir(path) => self.fs.new_dir(uid, path).map(ok),
             Action::Exec(path) => self.fs.exec(uid, path).map(ok),
-            Action::SetPerms(path, perms) => self.fs.set_perms(uid, path, *perms).map(ok),
+            Action::SetPerms(path, username, perms) => {
+                let for_user = self.users.id_of(username)?;
+                self.fs.set_perms(uid, for_user, path, *perms).map(ok)
+            }
             Action::Ls(path) => self.fs.ls(uid, path).map(ActionRes::Ls),
             Action::AddUser(name) => self.add_user(uid, name).map(|_| ActionRes::Ok),
             Action::ChangePassword { old, new } => self.users.change_pass(uid, old, new).map(ok),
