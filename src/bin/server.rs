@@ -10,17 +10,28 @@ use rocket::{
     http::{Cookie, CookieJar},
     post, routes,
     serde::json::Json,
+    time::Duration,
     State,
 };
 use structopt::StructOpt;
 
 type Sys = Arc<Mutex<System>>;
 
-async fn login(sys: &System, creds: &LoginInfo, cookies: &CookieJar<'_>) -> anyhow::Result<UserId> {
+async fn login(
+    sys: &mut System,
+    opt: &Opt,
+    creds: &LoginInfo,
+    cookies: &CookieJar<'_>,
+) -> anyhow::Result<UserId> {
     let uid = sys.login(&creds.username, &creds.password)?;
     let api_key = ApiKey::new(uid);
     let api_key = serde_json::to_string(&api_key)?;
-    cookies.add_private(Cookie::new("apikey", api_key));
+    let expires = rocket::time::OffsetDateTime::now_utc() + Duration::new(opt.api_exp_sec, 0);
+
+    let cookie = Cookie::build("apikey", api_key)
+        .expires(Some(expires))
+        .finish();
+    cookies.add_private(cookie);
     Ok(uid)
 }
 
@@ -34,11 +45,12 @@ fn get_api_key(cookies: &CookieJar<'_>) -> anyhow::Result<ApiKey> {
 #[post("/login", format = "json", data = "<creds>")]
 async fn login_endpoint(
     sys: &State<Sys>,
+    opt: &State<Opt>,
     creds: Json<LoginInfo>,
     cookies: &CookieJar<'_>,
 ) -> Json<ResResult<()>> {
-    let sys = sys.lock().await;
-    let res = login(&sys, &creds, cookies)
+    let mut sys = sys.lock().await;
+    let res = login(&mut sys, opt, &creds, cookies)
         .await
         .into_serialize()
         .map(|_| ());
@@ -68,6 +80,9 @@ async fn exec_endpoint(
 #[derive(Debug, structopt::StructOpt)]
 struct Opt {
     image: String,
+
+    #[structopt(long, default_value = "60")]
+    api_exp_sec: i64,
 }
 
 #[rocket::main]
@@ -79,12 +94,14 @@ async fn main() -> anyhow::Result<()> {
         Ok(file) => bincode::deserialize_from(file)?,
         Err(err) => return Err(err.into()),
     };
+
     let out = std::fs::File::create(&opt.image)?;
 
     let sys = Sys::new(Mutex::new(sys));
 
     rocket::build()
         .manage(sys.clone())
+        .manage(opt)
         .mount("/", routes![login_endpoint, exec_endpoint])
         .launch()
         .await?;

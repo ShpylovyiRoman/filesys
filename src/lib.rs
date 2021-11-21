@@ -20,6 +20,7 @@ pub enum Action {
     Ls(PathBuf),
     AddUser(Username),
     ChangePassword { old: String, new: String },
+    Unblock(Username),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,7 +43,7 @@ impl System {
         Ok(Self { fs, users })
     }
 
-    pub fn login(&self, name: &str, pass: &str) -> anyhow::Result<UserId> {
+    pub fn login(&mut self, name: &str, pass: &str) -> anyhow::Result<UserId> {
         self.users.login(name, pass)
     }
 
@@ -74,6 +75,15 @@ impl System {
             Action::Ls(path) => self.fs.ls(uid, path).map(ActionRes::Ls),
             Action::AddUser(name) => self.add_user(uid, name).map(|_| ActionRes::Ok),
             Action::ChangePassword { old, new } => self.users.change_pass(uid, old, new).map(ok),
+            Action::Unblock(username) => self.unblock(uid, username).map(|_| ActionRes::Ok),
+        }
+    }
+
+    fn unblock(&mut self, uid: UserId, username: &str) -> anyhow::Result<()> {
+        if uid != ADMIN_ID {
+            anyhow::bail!("only admin can unblock the user")
+        } else {
+            self.users.unblock(username)
         }
     }
 }
