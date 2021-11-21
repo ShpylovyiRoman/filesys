@@ -7,6 +7,8 @@ use argon2::{
 };
 use serde::{Deserialize, Serialize};
 
+const MAX_LOGIN_TRIES: usize = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(u64);
 
@@ -100,6 +102,7 @@ pub struct User {
     id: UserId,
     name: Username,
     pass: String,
+    last_login_tries: usize,
 }
 
 impl User {
@@ -108,16 +111,48 @@ impl User {
             id,
             name,
             pass: Default::default(),
+            last_login_tries: 0,
         };
         this.change_pass(pass)?;
         Ok(this)
     }
 
-    pub fn verify_pass(&self, pass: &str) -> anyhow::Result<Option<()>> {
+    fn is_blocked(&self) -> bool {
+        self.last_login_tries >= MAX_LOGIN_TRIES
+    }
+
+    pub fn verify_pass(&mut self, pass: &str) -> anyhow::Result<()> {
+        if self.is_blocked() {
+            anyhow::bail!("account if blocked")
+        }
+
         let parsed_hash =
             PasswordHash::new(&self.pass).map_err(|err| anyhow!("parsing hash: {}", err))?;
         let argon2 = Argon2::default();
-        Ok(argon2.verify_password(pass.as_bytes(), &parsed_hash).ok())
+        let ok = argon2
+            .verify_password(pass.as_bytes(), &parsed_hash)
+            .is_ok();
+
+        if ok {
+            self.reset_login_tries();
+            Ok(())
+        } else {
+            self.inc_login_tries()?;
+            Err(wrong_uname())
+        }
+    }
+
+    fn inc_login_tries(&mut self) -> anyhow::Result<()> {
+        self.last_login_tries += 1;
+        if self.last_login_tries >= MAX_LOGIN_TRIES {
+            anyhow::bail!("account is blocked")
+        } else {
+            Ok(())
+        }
+    }
+
+    fn reset_login_tries(&mut self) {
+        self.last_login_tries = 0;
     }
 
     pub fn change_pass(&mut self, pass: &str) -> anyhow::Result<()> {
@@ -211,14 +246,14 @@ impl UserDb {
         Ok(id)
     }
 
-    pub fn login(&self, name: &str, pass: &str) -> anyhow::Result<UserId> {
-        let uid = self.unames.get(name).ok_or_else(wrong_uname)?;
-        self.login_with_id(*uid, pass).map(|_| *uid)
+    pub fn login(&mut self, name: &str, pass: &str) -> anyhow::Result<UserId> {
+        let uid = *self.unames.get(name).ok_or_else(wrong_uname)?;
+        self.login_with_id(uid, pass).map(|_| uid)
     }
 
-    pub fn login_with_id(&self, uid: UserId, pass: &str) -> anyhow::Result<()> {
-        let user = self.users.get(&uid).ok_or_else(wrong_uname)?;
-        user.verify_pass(pass)?.ok_or_else(wrong_uname)
+    pub fn login_with_id(&mut self, uid: UserId, pass: &str) -> anyhow::Result<()> {
+        let user = self.users.get_mut(&uid).ok_or_else(wrong_uname)?;
+        user.verify_pass(pass)
     }
 
     pub fn change_pass(
@@ -241,5 +276,12 @@ impl UserDb {
             .get(username)
             .copied()
             .ok_or_else(|| anyhow::anyhow!("user not found"))
+    }
+
+    pub fn unblock(&mut self, username: &str) -> anyhow::Result<()> {
+        let id = self.id_of(username)?;
+        let user = self.users.get_mut(&id).expect("should exists");
+        user.reset_login_tries();
+        Ok(())
     }
 }

@@ -18,7 +18,7 @@ use structopt::StructOpt;
 type Sys = Arc<Mutex<System>>;
 
 async fn login(
-    sys: &System,
+    sys: &mut System,
     opt: &Opt,
     creds: &LoginInfo,
     cookies: &CookieJar<'_>,
@@ -49,8 +49,8 @@ async fn login_endpoint(
     creds: Json<LoginInfo>,
     cookies: &CookieJar<'_>,
 ) -> Json<ResResult<()>> {
-    let sys = sys.lock().await;
-    let res = login(&sys, &opt, &creds, cookies)
+    let mut sys = sys.lock().await;
+    let res = login(&mut sys, opt, &creds, cookies)
         .await
         .into_serialize()
         .map(|_| ());

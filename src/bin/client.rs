@@ -75,6 +75,9 @@ enum Cmd {
         username: Username,
     },
     ChangePass,
+    Unblock {
+        username: Username,
+    },
     Exit,
 }
 
@@ -105,6 +108,20 @@ async fn login(base: String) -> anyhow::Result<State> {
 }
 
 impl State {
+    async fn login_loop(base: &str) -> anyhow::Result<Self> {
+        const LOGIN_TRIES: usize = 3;
+
+        for _ in 0..LOGIN_TRIES {
+            match login(base.into()).await {
+                Ok(ok) => return Ok(ok),
+                Err(err) => {
+                    println!("error: {:#}", err);
+                }
+            }
+        }
+        anyhow::bail!("can't login, aborting")
+    }
+
     async fn new(base: String, username: String, password: String) -> anyhow::Result<Self> {
         let client = ClientBuilder::new().cookie_store(true).build()?;
 
@@ -146,6 +163,7 @@ impl State {
                 }
                 Action::ChangePassword { old, new }
             }
+            Cmd::Unblock { username } => Action::Unblock(username),
             Cmd::Exit => return Ok(true),
         };
 
@@ -169,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
     let base = format!("http://{}:{}", opt.host, opt.port);
 
-    let mut state = login(base.clone()).await?;
+    let mut state = State::login_loop(&base).await?;
 
     let mut line = String::new();
     loop {
@@ -196,7 +214,7 @@ async fn main() -> anyhow::Result<()> {
                 let string = err.to_string();
                 eprintln!("{}", string);
                 if string.contains(AUTH_REQUIRED) {
-                    state = login(base.clone()).await?;
+                    state = State::login_loop(&base).await?;
                 }
             }
         }
