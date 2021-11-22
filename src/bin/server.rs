@@ -3,7 +3,7 @@ use std::{io::ErrorKind, sync::Arc};
 use filesys::{
     protocol::{ApiKey, IntoSerialize, LoginInfo, ResResult},
     users::UserId,
-    Action, ActionRes, System,
+    Action, ActionRes, System, SystemImage,
 };
 use rocket::{
     futures::lock::Mutex,
@@ -91,7 +91,10 @@ async fn main() -> anyhow::Result<()> {
 
     let sys = match std::fs::File::open(&opt.image) {
         Err(err) if err.kind() == ErrorKind::NotFound => System::new()?,
-        Ok(file) => bincode::deserialize_from(file)?,
+        Ok(file) => {
+            let image: SystemImage = bincode::deserialize_from(file)?;
+            image.unpack()
+        }
         Err(err) => return Err(err.into()),
     };
 
@@ -109,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
     let sys = Arc::try_unwrap(sys)
         .map_err(|_| anyhow::anyhow!("bug: should be only one reference"))
         .unwrap();
-    let sys = sys.into_inner();
+    let sys = sys.into_inner().pack();
     bincode::serialize_into(out, &sys)?;
 
     Ok(())

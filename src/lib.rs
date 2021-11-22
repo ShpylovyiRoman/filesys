@@ -6,6 +6,7 @@ pub mod users;
 use std::path::PathBuf;
 
 use fs::{Fs, NodeEntry};
+use log::Logger;
 use serde::{Deserialize, Serialize};
 use users::{Perms, UserDb, UserId, Username, ADMIN_ID};
 
@@ -86,5 +87,29 @@ impl System {
         } else {
             self.users.unblock(username)
         }
+    }
+
+    pub fn pack(self) -> SystemImage {
+        let logger = log::take_logger();
+
+        let System { fs, users } = self;
+        SystemImage { fs, users, logger }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SystemImage {
+    fs: Fs,
+    users: UserDb,
+    logger: Logger,
+}
+
+impl SystemImage {
+    pub fn unpack(self) -> System {
+        let SystemImage { fs, users, logger } = self;
+
+        log::set_logger(logger);
+
+        System { fs, users }
     }
 }
