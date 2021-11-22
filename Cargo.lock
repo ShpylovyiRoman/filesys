@@ -511,6 +511,8 @@ dependencies = [
  "anyhow",
  "argon2",
  "bincode",
+ "log",
+ "once_cell",
  "rand",
  "reqwest",
  "rocket",
