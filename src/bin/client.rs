@@ -69,6 +69,7 @@ enum Cmd {
         perms: Perms,
     },
     Ls {
+        #[structopt(default_value = ".")]
         path: PathBuf,
     },
     AddUser {
@@ -78,6 +79,7 @@ enum Cmd {
     Unblock {
         username: Username,
     },
+    Logs,
     Exit,
 }
 
@@ -97,6 +99,12 @@ fn print_action_res(res: &ActionRes) {
                     NodeTag::Dir => 'd',
                 };
                 println!("{}{} {:>4} {}", tag, entry.perms, entry.size, entry.name);
+            }
+        }
+
+        ActionRes::Logs(logs) => {
+            for log in logs {
+                println!("{}", log);
             }
         }
     }
@@ -164,7 +172,18 @@ impl State {
                 Action::ChangePassword { old, new }
             }
             Cmd::Unblock { username } => Action::Unblock(username),
-            Cmd::Exit => return Ok(true),
+            Cmd::Logs => Action::Logs,
+            Cmd::Exit => {
+                self.client
+                    .get(format!("{}/logout", self.base))
+                    .send()
+                    .await?
+                    .json::<ResResult<()>>()
+                    .await?
+                    .deserialize()?;
+
+                return Ok(true);
+            }
         };
 
         let res = self
@@ -204,8 +223,9 @@ async fn main() -> anyhow::Result<()> {
                 continue;
             }
         };
+        let exit = matches!(cmd, Cmd::Exit);
         match state.execute(cmd).await {
-            Ok(exit) => {
+            Ok(_) => {
                 if exit {
                     break;
                 }

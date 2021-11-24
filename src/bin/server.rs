@@ -1,12 +1,15 @@
 use std::{io::ErrorKind, sync::Arc};
 
 use filesys::{
+    info,
     protocol::{ApiKey, IntoSerialize, LoginInfo, ResResult},
     users::UserId,
-    Action, ActionRes, System,
+    Action, ActionRes, System, SystemImage,
 };
+use rand::Rng;
 use rocket::{
     futures::lock::Mutex,
+    get,
     http::{Cookie, CookieJar},
     post, routes,
     serde::json::Json,
@@ -49,11 +52,35 @@ async fn login_endpoint(
     creds: Json<LoginInfo>,
     cookies: &CookieJar<'_>,
 ) -> Json<ResResult<()>> {
+    let id: u64 = rand::thread_rng().gen();
+    info!("=> /login id({:016x})", id);
     let mut sys = sys.lock().await;
     let res = login(&mut sys, opt, &creds, cookies)
         .await
         .into_serialize()
         .map(|_| ());
+    info!("<= /login id({:016x}) | Err({:?})", id, res.as_ref().err());
+    Json(res)
+}
+
+async fn logout(cookies: &CookieJar<'_>) -> anyhow::Result<()> {
+    let cookie = cookies
+        .get_private("apikey")
+        .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
+
+    let api_key = get_api_key(cookies)?;
+    let uid = api_key.uid();
+    info!(uid => "logout");
+    cookies.remove_private(cookie);
+    Ok(())
+}
+
+#[get("/logout")]
+async fn logout_endpoint(cookies: &CookieJar<'_>) -> Json<ResResult<()>> {
+    let id: u64 = rand::thread_rng().gen();
+    info!("=> /logout id({:016x})", id);
+    let res = logout(cookies).await.into_serialize();
+    info!("<= /logout id({:016x}) | Err({:?})", id, res.as_ref().err());
     Json(res)
 }
 
@@ -72,8 +99,12 @@ async fn exec_endpoint(
     cookies: &CookieJar<'_>,
     action: Json<Action>,
 ) -> Json<ResResult<ActionRes>> {
+    let id: u64 = rand::thread_rng().gen();
+    info!("=> /exec id({:016x})", id);
     let mut sys = sys.lock().await;
     let res = exec(&mut sys, cookies, &action).await.into_serialize();
+    info!("<= /exec id({:016x}) | Err({:?})", id, res.as_ref().err());
+
     Json(res)
 }
 
@@ -91,7 +122,10 @@ async fn main() -> anyhow::Result<()> {
 
     let sys = match std::fs::File::open(&opt.image) {
         Err(err) if err.kind() == ErrorKind::NotFound => System::new()?,
-        Ok(file) => bincode::deserialize_from(file)?,
+        Ok(file) => {
+            let image: SystemImage = bincode::deserialize_from(file)?;
+            image.unpack()
+        }
         Err(err) => return Err(err.into()),
     };
 
@@ -102,14 +136,14 @@ async fn main() -> anyhow::Result<()> {
     rocket::build()
         .manage(sys.clone())
         .manage(opt)
-        .mount("/", routes![login_endpoint, exec_endpoint])
+        .mount("/", routes![login_endpoint, exec_endpoint, logout_endpoint])
         .launch()
         .await?;
 
     let sys = Arc::try_unwrap(sys)
         .map_err(|_| anyhow::anyhow!("bug: should be only one reference"))
         .unwrap();
-    let sys = sys.into_inner();
+    let sys = sys.into_inner().pack();
     bincode::serialize_into(out, &sys)?;
 
     Ok(())
