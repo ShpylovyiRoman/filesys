@@ -95,6 +95,34 @@ impl FromStr for Perms {
     }
 }
 
+fn verify_pass(pass: &str) -> anyhow::Result<()> {
+    if pass.len() < 8 {
+        anyhow::bail!("password should be at least 8 symbols")
+    }
+
+    if pass.len() > 128 {
+        anyhow::bail!("password should be no more than 128 symbols")
+    }
+
+    let digit = pass.chars().any(|c| matches!(c, '0'..='9'));
+    let lower = pass.chars().any(|c| c.is_ascii_lowercase());
+    let upper = pass.chars().any(|c| c.is_ascii_uppercase());
+
+    if !digit {
+        anyhow::bail!("password should contain at least one digit")
+    }
+
+    if !lower {
+        anyhow::bail!("password should contain at least on lowercase letter")
+    }
+
+    if !upper {
+        anyhow::bail!("password should contain at least on uppercase letter")
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
     id: UserId,
@@ -109,7 +137,7 @@ impl User {
             name,
             pass: Default::default(),
         };
-        this.change_pass(pass)?;
+        this.change_pass_no_check(pass)?;
         Ok(this)
     }
 
@@ -120,7 +148,7 @@ impl User {
         Ok(argon2.verify_password(pass.as_bytes(), &parsed_hash).ok())
     }
 
-    pub fn change_pass(&mut self, pass: &str) -> anyhow::Result<()> {
+    pub fn change_pass_no_check(&mut self, pass: &str) -> anyhow::Result<()> {
         let salt = SaltString::generate(rand::thread_rng());
 
         let argon2 = Argon2::default();
@@ -132,6 +160,11 @@ impl User {
 
         self.pass = pass;
         Ok(())
+    }
+
+    pub fn change_pass(&mut self, pass: &str) -> anyhow::Result<()> {
+        verify_pass(pass)?;
+        self.change_pass_no_check(pass)
     }
 }
 
