@@ -6,6 +6,7 @@ use filesys::{
     users::UserId,
     Action, ActionRes, System, SystemImage,
 };
+use rand::Rng;
 use rocket::{
     futures::lock::Mutex,
     get,
@@ -51,11 +52,14 @@ async fn login_endpoint(
     creds: Json<LoginInfo>,
     cookies: &CookieJar<'_>,
 ) -> Json<ResResult<()>> {
+    let id: u64 = rand::thread_rng().gen();
+    info!("=> /login id({:016x})", id);
     let mut sys = sys.lock().await;
     let res = login(&mut sys, opt, &creds, cookies)
         .await
         .into_serialize()
         .map(|_| ());
+    info!("<= /login id({:016x}) | Err({:?})", id, res.as_ref().err());
     Json(res)
 }
 
@@ -73,7 +77,10 @@ async fn logout(cookies: &CookieJar<'_>) -> anyhow::Result<()> {
 
 #[get("/logout")]
 async fn logout_endpoint(cookies: &CookieJar<'_>) -> Json<ResResult<()>> {
+    let id: u64 = rand::thread_rng().gen();
+    info!("=> /logout id({:016x})", id);
     let res = logout(cookies).await.into_serialize();
+    info!("<= /logout id({:016x}) | Err({:?})", id, res.as_ref().err());
     Json(res)
 }
 
@@ -92,8 +99,12 @@ async fn exec_endpoint(
     cookies: &CookieJar<'_>,
     action: Json<Action>,
 ) -> Json<ResResult<ActionRes>> {
+    let id: u64 = rand::thread_rng().gen();
+    info!("=> /exec id({:016x})", id);
     let mut sys = sys.lock().await;
     let res = exec(&mut sys, cookies, &action).await.into_serialize();
+    info!("<= /exec id({:016x}) | Err({:?})", id, res.as_ref().err());
+
     Json(res)
 }
 
