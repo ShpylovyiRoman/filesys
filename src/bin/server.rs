@@ -1,12 +1,14 @@
 use std::{io::ErrorKind, sync::Arc};
 
 use filesys::{
+    info,
     protocol::{ApiKey, IntoSerialize, LoginInfo, ResResult},
     users::UserId,
     Action, ActionRes, System, SystemImage,
 };
 use rocket::{
     futures::lock::Mutex,
+    get,
     http::{Cookie, CookieJar},
     post, routes,
     serde::json::Json,
@@ -54,6 +56,24 @@ async fn login_endpoint(
         .await
         .into_serialize()
         .map(|_| ());
+    Json(res)
+}
+
+async fn logout(cookies: &CookieJar<'_>) -> anyhow::Result<()> {
+    let cookie = cookies
+        .get_private("apikey")
+        .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
+
+    let api_key = get_api_key(cookies)?;
+    let uid = api_key.uid();
+    info!(uid => "logout");
+    cookies.remove_private(cookie);
+    Ok(())
+}
+
+#[get("/logout")]
+async fn logout_endpoint(cookies: &CookieJar<'_>) -> Json<ResResult<()>> {
+    let res = logout(cookies).await.into_serialize();
     Json(res)
 }
 
@@ -105,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
     rocket::build()
         .manage(sys.clone())
         .manage(opt)
-        .mount("/", routes![login_endpoint, exec_endpoint])
+        .mount("/", routes![login_endpoint, exec_endpoint, logout_endpoint])
         .launch()
         .await?;
 

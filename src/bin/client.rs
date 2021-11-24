@@ -69,6 +69,7 @@ enum Cmd {
         perms: Perms,
     },
     Ls {
+        #[structopt(default_value = ".")]
         path: PathBuf,
     },
     AddUser {
@@ -172,7 +173,17 @@ impl State {
             }
             Cmd::Unblock { username } => Action::Unblock(username),
             Cmd::Logs => Action::Logs,
-            Cmd::Exit => return Ok(true),
+            Cmd::Exit => {
+                self.client
+                    .get(format!("{}/logout", self.base))
+                    .send()
+                    .await?
+                    .json::<ResResult<()>>()
+                    .await?
+                    .deserialize()?;
+
+                return Ok(true);
+            }
         };
 
         let res = self
@@ -212,8 +223,9 @@ async fn main() -> anyhow::Result<()> {
                 continue;
             }
         };
+        let exit = matches!(cmd, Cmd::Exit);
         match state.execute(cmd).await {
-            Ok(exit) => {
+            Ok(_) => {
                 if exit {
                     break;
                 }

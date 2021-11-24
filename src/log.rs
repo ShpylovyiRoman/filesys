@@ -39,16 +39,13 @@ pub struct Log {
 }
 
 static FORMAT: Lazy<Vec<FormatItem>> = Lazy::new(|| {
-    format_description::parse(
-        "[month repr:short] [day] [hour]:[minute]:[second].[subsecond digits:3]",
-    )
-    .unwrap()
+    format_description::parse("[month repr:short] [day] [hour]:[minute]:[second]").unwrap()
 });
 
 impl std::fmt::Display for Log {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let time = self.time.format(&FORMAT).map_err(|_| std::fmt::Error)?;
-        write!(f, "{} {} ", self.level, time)?;
+        write!(f, "[{} {}] ", self.level, time)?;
         if let Some(uid) = self.uid {
             write!(f, "{:?} ", uid)?;
         }
