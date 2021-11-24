@@ -1,4 +1,7 @@
-use std::sync::{Mutex, MutexGuard};
+use std::{
+    fmt::Debug,
+    sync::{Mutex, MutexGuard},
+};
 
 use once_cell::sync::Lazy;
 use rocket::time::{
@@ -27,10 +30,10 @@ impl std::fmt::Display for LogLevel {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Log {
     level: LogLevel,
-    uid: UserId,
+    uid: Option<UserId>,
     msg: String,
     time: OffsetDateTime,
 }
@@ -45,17 +48,30 @@ static FORMAT: Lazy<Vec<FormatItem>> = Lazy::new(|| {
 impl std::fmt::Display for Log {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let time = self.time.format(&FORMAT).map_err(|_| std::fmt::Error)?;
-
-        write!(f, "{} {} {:?} {}", self.level, time, self.uid, self.msg)
+        write!(f, "{} {} ", self.level, time)?;
+        if let Some(uid) = self.uid {
+            write!(f, "{:?} ", uid)?;
+        }
+        write!(f, "{}", self.msg)
     }
 }
 
 impl Log {
-    pub fn new(level: LogLevel, uid: UserId, msg: String) -> Self {
+    pub fn new_with_uid(level: LogLevel, uid: UserId, msg: String) -> Self {
         let time = OffsetDateTime::now_utc();
         Self {
             level,
-            uid,
+            uid: Some(uid),
+            msg,
+            time,
+        }
+    }
+
+    pub fn new(level: LogLevel, msg: String) -> Self {
+        let time = OffsetDateTime::now_utc();
+        Self {
+            level,
+            uid: None,
             msg,
             time,
         }
@@ -70,6 +86,11 @@ pub struct Logger {
 impl Logger {
     pub fn log(&mut self, log: Log) {
         self.logs.push(log);
+    }
+
+    /// Get a reference to the logger's logs.
+    pub fn logs(&self) -> &[Log] {
+        self.logs.as_ref()
     }
 }
 
@@ -89,23 +110,44 @@ pub fn logger() -> MutexGuard<'static, Logger> {
     LOGGER.lock().expect("acquiring mutex")
 }
 
+#[macro_export]
 macro_rules! debug {
-    ($uid: expr,  $($args : tt)*) => {
-        let log = Log::new($crate::log::LogLevel::Debug, $uid, format!($($args)*));
-        $crate::log::logger().log(log);
-    };
+    ($uid: expr =>  $($args : tt)*) => {{
+        use $crate::log::*;
+        let log = Log::new_with_uid(LogLevel::Debug, $uid, format!($($args)*));
+        logger().log(log);
+    }};
+    ($($args : tt)*) => {{
+        use $crate::log::*;
+        let log = Log::new(LogLevel::Debug, format!($($args)*));
+        logger().log(log);
+    }};
 }
 
+#[macro_export]
 macro_rules! info {
-    ($uid: expr,  $($args : tt)*) => {
-        let log = Log::new($crate::log::LogLevel::Info, $uid, format!($($args)*));
-        $crate::log::logger().log(log);
-    };
+    ($uid: expr =>  $($args : tt)*) => {{
+        use $crate::log::*;
+        let log = Log::new_with_uid(LogLevel::Info, $uid, format!($($args)*));
+        logger().log(log);
+    }};
+    ($($args : tt)*) => {{
+        use $crate::log::*;
+        let log = Log::new(LogLevel::Info, format!($($args)*));
+        logger().log(log);
+    }};
 }
 
+#[macro_export]
 macro_rules! error {
-    ($uid: expr,  $($args : tt)*) => {
-        let log = Log::new($crate::log::LogLevel::Error, $uid, format!( $($args)*));
-        $crate::log::logger().log(log);
-    };
+    ($uid: expr => $($args : tt)*) => {{
+        use $crate::log::*;
+        let log = Log::new_with_uid(LogLevel::Error, $uid, format!($($args)*));
+        logger().log(log);
+    }};
+    ($($args : tt)*) => {{
+        use $crate::log::*;
+        let log = Log::new(LogLevel::Error, format!($($args)*));
+        logger().log(log);
+    }};
 }

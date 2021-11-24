@@ -78,6 +78,7 @@ enum Cmd {
     Unblock {
         username: Username,
     },
+    Logs,
     Exit,
 }
 
@@ -97,6 +98,12 @@ fn print_action_res(res: &ActionRes) {
                     NodeTag::Dir => 'd',
                 };
                 println!("{}{} {:>4} {}", tag, entry.perms, entry.size, entry.name);
+            }
+        }
+
+        ActionRes::Logs(logs) => {
+            for log in logs {
+                println!("{}", log);
             }
         }
     }
@@ -164,6 +171,7 @@ impl State {
                 Action::ChangePassword { old, new }
             }
             Cmd::Unblock { username } => Action::Unblock(username),
+            Cmd::Logs => Action::Logs,
             Cmd::Exit => return Ok(true),
         };
 
