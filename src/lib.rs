@@ -3,12 +3,19 @@ pub mod log;
 pub mod protocol;
 pub mod users;
 
-use std::path::PathBuf;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use fs::{Fs, NodeEntry};
 use log::{Log, Logger};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use users::{Perms, UserDb, UserId, Username, ADMIN_ID};
+
+static INACTIVITY_TIMEOUT: Lazy<Duration> = Lazy::new(|| Duration::new(60, 0));
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Action {
@@ -55,22 +62,29 @@ pub enum ActionRes {
     Logs(Vec<Log>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct System {
     fs: Fs,
     users: UserDb,
+    last_access: HashMap<UserId, Instant>,
 }
 
 impl System {
     pub fn new() -> anyhow::Result<Self> {
         let fs = Fs::new();
         let users = UserDb::new()?;
-        Ok(Self { fs, users })
+        Ok(Self {
+            fs,
+            users,
+            last_access: HashMap::new(),
+        })
     }
 
     pub fn login(&mut self, name: &str, pass: &str) -> anyhow::Result<UserId> {
         info!("new login with {:?}", name);
-        self.users.login(name, pass)
+        let id = self.users.login(name, pass)?;
+        self.last_access.insert(id, Instant::now());
+        Ok(id)
     }
 
     pub fn add_user(&mut self, uid: UserId, name: &str) -> anyhow::Result<UserId> {
@@ -82,6 +96,16 @@ impl System {
     }
 
     pub fn exec(&mut self, uid: UserId, cmd: &Action) -> anyhow::Result<ActionRes> {
+        let auth = || anyhow::anyhow!("inactivity timeout: authentication required");
+        if let Some(last) = self.last_access.get(&uid) {
+            let elapsed = last.elapsed();
+            if elapsed > *INACTIVITY_TIMEOUT {
+                return Err(auth());
+            }
+        } else {
+            return Err(auth());
+        }
+
         let ok = |_| ActionRes::Ok;
 
         let res = match cmd {
@@ -120,7 +144,11 @@ impl System {
     pub fn pack(self) -> SystemImage {
         let logger = log::take_logger();
 
-        let System { fs, users } = self;
+        let System {
+            fs,
+            users,
+            last_access: _,
+        } = self;
         SystemImage { fs, users, logger }
     }
 
@@ -146,6 +174,10 @@ impl SystemImage {
 
         log::set_logger(logger);
 
-        System { fs, users }
+        System {
+            fs,
+            users,
+            last_access: HashMap::new(),
+        }
     }
 }
