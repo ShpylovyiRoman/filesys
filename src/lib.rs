@@ -96,7 +96,10 @@ impl System {
     }
 
     pub fn exec(&mut self, uid: UserId, cmd: &Action) -> anyhow::Result<ActionRes> {
-        let auth = || anyhow::anyhow!("inactivity timeout: authentication required");
+        let auth = || {
+            info!(uid => "inactivity timeout fired");
+            anyhow::anyhow!("inactivity timeout: authentication required")
+        };
         if let Some(last) = self.last_access.get(&uid) {
             let elapsed = last.elapsed();
             if elapsed > *INACTIVITY_TIMEOUT {
